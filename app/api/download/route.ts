@@ -3,6 +3,11 @@ import { readFile } from 'fs/promises'
 import { join } from 'path'
 
 export async function GET(request: NextRequest) {
+  const session = request.cookies.get('mathgen_session')?.value
+  if (!session) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
   const searchParams = request.nextUrl.searchParams
   const fileName = searchParams.get('file')
 
@@ -35,4 +40,3 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'File not found' }, { status: 404 })
   }
 }
-

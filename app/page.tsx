@@ -12,6 +12,7 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null)
   const [warning, setWarning] = useState<string | null>(null)
   const [downloadLinks, setDownloadLinks] = useState<{ pdf?: string; tex?: string }>({})
+  const [loggingOut, setLoggingOut] = useState(false)
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -30,6 +31,15 @@ export default function Home() {
 
   const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault()
+  }
+
+  const handleLogout = async () => {
+    setLoggingOut(true)
+    try {
+      await fetch('/api/logout', { method: 'POST' })
+    } finally {
+      window.location.href = '/login'
+    }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -85,6 +95,16 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-2xl mx-auto">
+        <div className="flex justify-end mb-4">
+          <button
+            type="button"
+            onClick={handleLogout}
+            disabled={loggingOut}
+            className="text-sm text-gray-600 hover:text-gray-900 underline-offset-4 underline disabled:opacity-60"
+          >
+            {loggingOut ? 'Signing out...' : 'Logout'}
+          </button>
+        </div>
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-gray-900 mb-2">
             Solution Manual Generator
@@ -236,4 +256,3 @@ export default function Home() {
     </div>
   )
 }
-

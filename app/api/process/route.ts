@@ -126,6 +126,11 @@ function closeIncompleteLatexCommands(latex: string): string {
 }
 
 export async function POST(req: NextRequest) {
+  const session = req.cookies.get('mathgen_session')?.value
+  if (!session) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
   let tempFiles: string[] = []
   
   try {
@@ -379,4 +384,3 @@ ${latexCode}
     }, { status: 500 })
   }
 }
-
