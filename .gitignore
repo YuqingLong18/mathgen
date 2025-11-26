@@ -25,6 +25,7 @@ yarn-error.log*
 /tmp
 /uploads
 /downloads
+/logs
 *.pdf
 *.tex
 *.aux

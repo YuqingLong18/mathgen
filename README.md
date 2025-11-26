@@ -193,6 +193,34 @@ mathgen/
 - Check the [OpenRouter status page](https://status.openrouter.ai/) for service issues
 - Verify the model supports vision/image inputs if using image uploads
 
+## Deployment
+
+### Server Deployment (CentOS with BaoTa)
+
+For detailed deployment instructions on CentOS servers with BaoTa panel, see:
+
+- **[DEPLOYMENT.md](./DEPLOYMENT.md)** - Complete deployment guide with step-by-step instructions
+- **[DEPLOYMENT_QUICK_START.md](./DEPLOYMENT_QUICK_START.md)** - Quick reference guide for experienced users
+
+**Key Requirements for Server Deployment:**
+- XeLaTeX installed and in PATH
+- Poppler utils for PDF conversion
+- Node.js 18+ with PM2 for process management
+- Chinese fonts (optional but recommended for CJK support)
+
+**Quick Setup:**
+```bash
+# Run automated setup script (requires root/sudo)
+sudo ./scripts/setup-centos.sh
+
+# Verify installation
+./scripts/verify-installation.sh
+```
+
+### Other Platforms
+
+For deployment on other platforms (Ubuntu, Docker, etc.), refer to the general setup instructions in this README and adapt as needed.
+
 ## License
 
 MIT

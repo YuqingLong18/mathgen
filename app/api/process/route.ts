@@ -3,7 +3,7 @@ import { writeFile, mkdir, readFile, unlink } from 'fs/promises'
 import { join } from 'path'
 import { exec } from 'child_process'
 import { promisify } from 'util'
-import { sanitizeLatex } from '@/lib/latex-sanitizer'
+import { sanitizeLatex } from '../../lib/latex-sanitizer'
 
 const execAsync = promisify(exec)
 
