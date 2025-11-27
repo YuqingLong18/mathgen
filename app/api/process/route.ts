@@ -265,17 +265,27 @@ IMPORTANT: Ensure all LaTeX commands are properly closed. If the response is lon
       log('OpenRouter fetch failed', { error: fetchError?.message || String(fetchError) })
       throw new Error(`OpenRouter request failed: ${fetchError?.message || String(fetchError)}`)
     }
-    const fetchDurationMs = Date.now() - fetchStart
+    const headersReceivedAt = Date.now()
+    const fetchDurationMs = headersReceivedAt - fetchStart
     if (fetchDurationMs > OPENROUTER_TIMEOUT_MS * 0.8) {
       console.warn(`OpenRouter response latency: ${fetchDurationMs}ms`)
     }
 
     const contentType = response.headers.get('content-type') || ''
+    log('OpenRouter headers received', {
+      status: response.status,
+      contentType,
+      headerWaitMs: fetchDurationMs,
+    })
+
+    const bodyStart = Date.now()
     const rawBody = await response.text()
+    const bodyReadMs = Date.now() - bodyStart
     log('OpenRouter response received', {
       status: response.status,
       contentType,
-      durationMs: fetchDurationMs,
+      headerWaitMs: fetchDurationMs,
+      bodyReadMs,
       bodyLength: rawBody?.length || 0,
     })
 
