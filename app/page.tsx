@@ -65,16 +65,32 @@ export default function Home() {
         body: formData,
       })
 
-      const data = await response.json()
+      const contentType = response.headers.get('content-type') || ''
+      const responseText = await response.text()
+
+      let data: any = null
+      if (contentType.includes('application/json') && responseText) {
+        try {
+          data = JSON.parse(responseText)
+        } catch (parseErr) {
+          // Ignore JSON parse errors; fallback to text-based error handling
+        }
+      }
       
       if (!response.ok) {
-        // Even if there's an error, check if we have a .tex file to download
-        if (data.texUrl) {
+        if (data?.texUrl) {
           setDownloadLinks({
             tex: data.texUrl,
           })
         }
-        setError(`${data.error || 'Processing failed'}${data.details ? ': ' + data.details.substring(0, 200) : ''}`)
+        const message = data?.error || data?.message || `Request failed with status ${response.status}`
+        const details = data?.details || (!data && responseText ? responseText : '')
+        setError(`${message}${details ? ': ' + details.substring(0, 200) : ''}`)
+        return
+      }
+
+      if (!data) {
+        setError('Unexpected server response. Please try again.')
         return
       }
 

@@ -8,6 +8,7 @@ import { sanitizeLatex } from '../../../lib/latex-sanitizer'
 const execAsync = promisify(exec)
 
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions'
+const OPENROUTER_TIMEOUT_MS = Number(process.env.OPENROUTER_TIMEOUT_MS || '240000') // default 4 minutes to allow long generations
 
 export const runtime = 'nodejs'
 export const maxDuration = 300 // 5 minutes
@@ -207,41 +208,71 @@ IMPORTANT: Ensure all LaTeX commands are properly closed. If the response is lon
 
     const model = process.env.OPENROUTER_MODEL || 'openai/gpt-4o'
     
-    const response = await fetch(OPENROUTER_API_URL, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': process.env.OPENROUTER_HTTP_REFERER || 'http://localhost:3000',
-        'X-Title': process.env.OPENROUTER_X_TITLE || 'Solution Manual Generator',
-      },
-      body: JSON.stringify({
-        model: model,
-        messages: [
-          {
-            role: 'user',
-            content: [
-              { type: 'text', text: userPrompt },
-              ...imageContents,
-            ],
-          },
-        ],
-        max_tokens: 16000, // Increased for longer solution manuals
-      }),
-    })
+    const fetchStart = Date.now()
+    let response: Response
+    try {
+      response = await fetch(OPENROUTER_API_URL, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': process.env.OPENROUTER_HTTP_REFERER || 'http://localhost:3000',
+          'X-Title': process.env.OPENROUTER_X_TITLE || 'Solution Manual Generator',
+        },
+        body: JSON.stringify({
+          model: model,
+          messages: [
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: userPrompt },
+                ...imageContents,
+              ],
+            },
+          ],
+          max_tokens: 16000, // Increased for longer solution manuals
+        }),
+        signal: AbortSignal.timeout(OPENROUTER_TIMEOUT_MS),
+      })
+    } catch (fetchError: any) {
+      if (fetchError?.name === 'AbortError') {
+        throw new Error(`OpenRouter request timed out after ${Math.floor(OPENROUTER_TIMEOUT_MS / 1000)}s. Try a smaller file or lower detail level.`)
+      }
+      throw new Error(`OpenRouter request failed: ${fetchError?.message || String(fetchError)}`)
+    }
+    const fetchDurationMs = Date.now() - fetchStart
+    if (fetchDurationMs > OPENROUTER_TIMEOUT_MS * 0.8) {
+      console.warn(`OpenRouter response latency: ${fetchDurationMs}ms`)
+    }
+
+    const contentType = response.headers.get('content-type') || ''
+    const rawBody = await response.text()
 
     if (!response.ok) {
       let errorMessage = `OpenRouter API error (${response.status}): ${response.statusText}`
-      try {
-        const errorData = await response.json()
-        errorMessage = errorData.error?.message || errorData.error?.text || errorData.message || errorMessage
-      } catch (e) {
-        // If JSON parsing fails, use the default error message
+      if (contentType.includes('application/json')) {
+        try {
+          const errorData = JSON.parse(rawBody)
+          errorMessage = errorData.error?.message || errorData.error?.text || errorData.message || errorMessage
+        } catch (e) {
+          // Ignore JSON parsing errors on error bodies
+        }
+      } else if (rawBody) {
+        errorMessage += ` - ${rawBody.substring(0, 200)}`
       }
       throw new Error(errorMessage)
     }
 
-    const completion = await response.json()
+    let completion: any
+    try {
+      completion = JSON.parse(rawBody || '{}')
+    } catch (parseError) {
+      throw new Error('Failed to parse OpenRouter response as JSON')
+    }
+
+    if (!completion?.choices?.length) {
+      throw new Error('OpenRouter response missing choices')
+    }
     const choice = completion.choices[0]
     let latexCode = choice?.message?.content || ''
 
