@@ -3,6 +3,7 @@ import { writeFile, mkdir, readFile, unlink } from 'fs/promises'
 import { join } from 'path'
 import { exec } from 'child_process'
 import { promisify } from 'util'
+import { randomUUID } from 'crypto'
 import { sanitizeLatex } from '../../../lib/latex-sanitizer'
 
 const execAsync = promisify(exec)
@@ -127,6 +128,17 @@ function closeIncompleteLatexCommands(latex: string): string {
 }
 
 export async function POST(req: NextRequest) {
+  const requestId = randomUUID()
+  const overallStart = Date.now()
+  const log = (message: string, data?: Record<string, any>) => {
+    const duration = `${Date.now() - overallStart}ms`
+    if (data) {
+      console.info(`[process:${requestId}] ${message}`, { duration, ...data })
+    } else {
+      console.info(`[process:${requestId}] ${message}`, { duration })
+    }
+  }
+
   const session = req.cookies.get('mathgen_session')?.value
   if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -149,6 +161,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid file type. Please upload PDF or image.' }, { status: 400 })
     }
 
+    log('Upload received', {
+      fileName,
+      fileSize: file.size,
+      isPdf,
+      isImage,
+      detailLevel,
+      promptLength: prompt.length,
+    })
+
     // Save uploaded file temporarily
     const tempDir = join('/tmp', `upload_${Date.now()}`)
     await mkdir(tempDir, { recursive: true })
@@ -156,12 +177,14 @@ export async function POST(req: NextRequest) {
     const arrayBuffer = await file.arrayBuffer()
     await writeFile(tempFilePath, Buffer.from(arrayBuffer))
     tempFiles.push(tempFilePath)
+    log('Stored upload to temp', { tempFilePath })
 
     // Convert PDF to images if needed
     let imagePaths: string[] = []
     if (isPdf) {
       imagePaths = await convertPdfToImages(tempFilePath)
       tempFiles.push(...imagePaths)
+      log('Converted PDF to images', { pageCount: imagePaths.length })
     } else {
       imagePaths = [tempFilePath]
     }
@@ -236,8 +259,10 @@ IMPORTANT: Ensure all LaTeX commands are properly closed. If the response is lon
       })
     } catch (fetchError: any) {
       if (fetchError?.name === 'AbortError') {
+        log('OpenRouter fetch timed out', { timeoutMs: OPENROUTER_TIMEOUT_MS })
         throw new Error(`OpenRouter request timed out after ${Math.floor(OPENROUTER_TIMEOUT_MS / 1000)}s. Try a smaller file or lower detail level.`)
       }
+      log('OpenRouter fetch failed', { error: fetchError?.message || String(fetchError) })
       throw new Error(`OpenRouter request failed: ${fetchError?.message || String(fetchError)}`)
     }
     const fetchDurationMs = Date.now() - fetchStart
@@ -247,6 +272,12 @@ IMPORTANT: Ensure all LaTeX commands are properly closed. If the response is lon
 
     const contentType = response.headers.get('content-type') || ''
     const rawBody = await response.text()
+    log('OpenRouter response received', {
+      status: response.status,
+      contentType,
+      durationMs: fetchDurationMs,
+      bodyLength: rawBody?.length || 0,
+    })
 
     if (!response.ok) {
       let errorMessage = `OpenRouter API error (${response.status}): ${response.statusText}`
@@ -275,6 +306,10 @@ IMPORTANT: Ensure all LaTeX commands are properly closed. If the response is lon
     }
     const choice = completion.choices[0]
     let latexCode = choice?.message?.content || ''
+    log('Parsed OpenRouter response', {
+      finishReason: choice?.finish_reason,
+      latexLength: typeof latexCode === 'string' ? latexCode.length : Array.isArray(latexCode) ? latexCode.length : 0,
+    })
 
     // Handle array-based message content responses (e.g., OpenAI vision format)
     if (Array.isArray(latexCode)) {
@@ -321,9 +356,9 @@ IMPORTANT: Ensure all LaTeX commands are properly closed. If the response is lon
 
     if (isTruncated || seemsIncomplete) {
       if (isTruncated) {
-        console.warn('OpenRouter response was truncated due to token limit')
+        console.warn(`[process:${requestId}] OpenRouter response was truncated due to token limit`)
       } else {
-        console.warn('LaTeX response appears incomplete')
+        console.warn(`[process:${requestId}] LaTeX response appears incomplete`)
       }
       // Try to close any open LaTeX commands
       latexCode = closeIncompleteLatexCommands(latexCode)
@@ -377,7 +412,10 @@ ${latexCode}
 
     // Compile LaTeX to PDF
     try {
+      const compileStart = Date.now()
       await execAsync(`cd "${outputDir}" && xelatex -interaction=nonstopmode solutions.tex`)
+      const compileDuration = Date.now() - compileStart
+      log('LaTeX compilation completed', { compileDurationMs: compileDuration })
       
       const pdfPath = join(outputDir, 'solutions.pdf')
       const pdfBuffer = await readFile(pdfPath)
@@ -402,13 +440,15 @@ ${latexCode}
         }
       }
 
+      log('Success response ready', { pdfUrl: `/api/download?file=solutions_${timestamp}.pdf` })
+
       return NextResponse.json({
         pdfUrl: `/api/download?file=solutions_${timestamp}.pdf`,
         texUrl: `/api/download?file=solutions_${timestamp}.tex`,
         warning: isTruncated ? 'Response was truncated due to token limit. Some solutions may be incomplete.' : undefined,
       })
     } catch (compileError: any) {
-      console.error('LaTeX compilation error:', compileError)
+      console.error(`[process:${requestId}] LaTeX compilation error:`, compileError)
       
       // Save the .tex file even if compilation failed, so user can debug
       const downloadDir = join(process.cwd(), 'downloads')
@@ -435,7 +475,7 @@ ${latexCode}
       }, { status: 500 })
     }
   } catch (error: any) {
-    console.error('Processing error:', error)
+    console.error(`[process:${requestId}] Processing error:`, error)
     
     // Clean up temp files
     for (const f of tempFiles) {
@@ -445,6 +485,8 @@ ${latexCode}
         // Ignore cleanup errors
       }
     }
+
+    log('Returning error response', { message: error.message })
 
     return NextResponse.json({
       error: error.message || 'An error occurred during processing',
