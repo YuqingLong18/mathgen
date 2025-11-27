@@ -244,14 +244,50 @@ IMPORTANT: Ensure all LaTeX commands are properly closed. If the response is lon
     const completion = await response.json()
     const choice = completion.choices[0]
     let latexCode = choice?.message?.content || ''
+
+    // Handle array-based message content responses (e.g., OpenAI vision format)
+    if (Array.isArray(latexCode)) {
+      latexCode = latexCode
+        .map((part: any) => {
+          if (typeof part === 'string') return part
+          if (part?.type === 'text' && typeof part.text === 'string') return part.text
+          return ''
+        })
+        .filter(Boolean)
+        .join('\n')
+    } else if (typeof latexCode !== 'string') {
+      latexCode = String(latexCode || '')
+    }
     
     // Check if response was truncated or seems incomplete
     const finishReason = choice?.finish_reason
     const isTruncated = finishReason === 'length'
-    
-    // Also check if LaTeX seems incomplete (ends with incomplete command)
-    const seemsIncomplete = /\\frac\{[^}]*$|\\sqrt\{[^}]*$|\\begin\{[^}]+\}[^]*$/.test(latexCode.trim())
-    
+
+    // Heuristic: detect likely incomplete LaTeX caused by truncation
+    const trimmedLatex = latexCode.trim()
+    const openBraceCount = (trimmedLatex.match(/\{/g) || []).length
+    const closeBraceCount = (trimmedLatex.match(/\}/g) || []).length
+    const beginEnvs = [...trimmedLatex.matchAll(/\\begin\{([^}]+)\}/g)].map(m => m[1])
+    const endEnvs = [...trimmedLatex.matchAll(/\\end\{([^}]+)\}/g)].map(m => m[1])
+    const unclosedEnvCount = beginEnvs.filter(env => {
+      const endIndex = endEnvs.indexOf(env)
+      if (endIndex !== -1) {
+        endEnvs.splice(endIndex, 1)
+        return false
+      }
+      return true
+    }).length
+    const hasUnclosedDoc =
+      trimmedLatex.includes('\\begin{document}') && !trimmedLatex.includes('\\end{document}')
+    const trailingCommand =
+      /\\frac\{[^}]*$/.test(trimmedLatex) ||
+      /\\sqrt\{[^}]*$/.test(trimmedLatex) ||
+      /\\left[^\s]*$/.test(trimmedLatex) ||
+      trimmedLatex.endsWith('\\')
+
+    const seemsIncomplete =
+      openBraceCount > closeBraceCount || unclosedEnvCount > 0 || hasUnclosedDoc || trailingCommand
+
     if (isTruncated || seemsIncomplete) {
       if (isTruncated) {
         console.warn('OpenRouter response was truncated due to token limit')
