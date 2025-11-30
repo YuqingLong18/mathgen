@@ -458,9 +458,21 @@ IMPORTANT: Ensure all LaTeX commands are properly closed. If the response is lon
       // Build document body
       let documentBody = `\\begin{document}\n`
       
-      // Add title page if title is provided
-      if (title) {
-        documentBody += `\\maketitle\n\\newpage\n`
+      // Add title section at the top of first page (no separate title page)
+      if (title || creator || date) {
+        documentBody += `\\begin{center}\n`
+        if (title) {
+          documentBody += `{\\Large\\bfseries ${escapeLatex(title)}}\\\\[0.5em]\n`
+        }
+        if (creator) {
+          documentBody += `${escapeLatex(creator)}\\\\[0.3em]\n`
+        }
+        if (date) {
+          documentBody += `${escapeLatex(date)}\n`
+        } else {
+          documentBody += `\\today\n`
+        }
+        documentBody += `\\end{center}\n\\vspace{1em}\n\\hrule\n\\vspace{1em}\n\n`
       }
       
       documentBody += `${latexCode}\n\\end{document}`
@@ -553,9 +565,22 @@ IMPORTANT: Ensure all LaTeX commands are properly closed. If the response is lon
             }
           }
           
-          // Add maketitle if title exists and not already in body
-          if (title && !body.includes('\\maketitle') && !body.trim().startsWith('\\maketitle')) {
-            latexCode = `${preamble}\\begin{document}\n\\maketitle\n\\newpage\n${body}`
+          // Add title section at top if metadata exists and not already in body
+          if ((title || creator || date) && !body.includes('\\maketitle') && !body.trim().match(/^\\begin\{center\}.*?\\end\{center\}/s)) {
+            let titleSection = `\\begin{center}\n`
+            if (title && !preamble.includes('\\title')) {
+              titleSection += `{\\Large\\bfseries ${escapeLatex(title)}}\\\\[0.5em]\n`
+            }
+            if (creator && !preamble.includes('\\author')) {
+              titleSection += `${escapeLatex(creator)}\\\\[0.3em]\n`
+            }
+            if (date && !preamble.includes('\\date')) {
+              titleSection += `${escapeLatex(date)}\n`
+            } else if (!preamble.includes('\\date')) {
+              titleSection += `\\today\n`
+            }
+            titleSection += `\\end{center}\n\\vspace{1em}\n\\hrule\n\\vspace{1em}\n\n`
+            latexCode = `${preamble}\\begin{document}\n${titleSection}${body}`
           } else {
             latexCode = `${preamble}\\begin{document}${body}`
           }
