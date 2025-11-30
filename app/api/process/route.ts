@@ -566,7 +566,9 @@ IMPORTANT: Ensure all LaTeX commands are properly closed. If the response is lon
           }
           
           // Add title section at top if metadata exists and not already in body
-          if ((title || creator || date) && !body.includes('\\maketitle') && !body.trim().match(/^\\begin\{center\}.*?\\end\{center\}/s)) {
+          // Check if title section already exists (using [\s\S] instead of . with s flag for ES5 compatibility)
+          const hasTitleSection = body.trim().match(/^\\begin\{center\}[\s\S]*?\\end\{center\}/)
+          if ((title || creator || date) && !body.includes('\\maketitle') && !hasTitleSection) {
             let titleSection = `\\begin{center}\n`
             if (title && !preamble.includes('\\title')) {
               titleSection += `{\\Large\\bfseries ${escapeLatex(title)}}\\\\[0.5em]\n`
