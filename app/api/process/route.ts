@@ -18,13 +18,21 @@ async function parseFormData(req: NextRequest): Promise<{
   file: File | null
   prompt: string
   detailLevel: string
+  title: string
+  date: string
+  creator: string
+  footer: string
 }> {
   const formData = await req.formData()
   const file = formData.get('file') as File | null
   const prompt = (formData.get('prompt') as string) || ''
   const detailLevel = (formData.get('detailLevel') as string) || 'usual'
+  const title = (formData.get('title') as string) || ''
+  const date = (formData.get('date') as string) || ''
+  const creator = (formData.get('creator') as string) || ''
+  const footer = (formData.get('footer') as string) || ''
   
-  return { file, prompt, detailLevel }
+  return { file, prompt, detailLevel, title, date, creator, footer }
 }
 
 async function convertPdfToImages(pdfPath: string): Promise<string[]> {
@@ -56,6 +64,27 @@ async function getImageMimeType(imagePath: string): Promise<string> {
   if (imagePath.endsWith('.jpg') || imagePath.endsWith('.jpeg')) return 'image/jpeg'
   if (imagePath.endsWith('.pdf')) return 'application/pdf'
   return 'image/png'
+}
+
+/**
+ * Escapes LaTeX special characters in user input
+ * This prevents LaTeX from interpreting user text as commands
+ */
+function escapeLatex(text: string): string {
+  if (!text) return ''
+  // Escape special LaTeX characters
+  // Order matters: backslash must be escaped first
+  return text
+    .replace(/\\/g, '\\textbackslash{}')
+    .replace(/\{/g, '\\{')
+    .replace(/\}/g, '\\}')
+    .replace(/#/g, '\\#')
+    .replace(/\$/g, '\\$')
+    .replace(/%/g, '\\%')
+    .replace(/&/g, '\\&')
+    .replace(/\^/g, '\\textasciicircum{}')
+    .replace(/_/g, '\\_')
+    .replace(/~/g, '\\textasciitilde{}')
 }
 
 /**
@@ -147,7 +176,7 @@ export async function POST(req: NextRequest) {
   let tempFiles: string[] = []
   
   try {
-    const { file, prompt, detailLevel } = await parseFormData(req)
+    const { file, prompt, detailLevel, title, date, creator, footer } = await parseFormData(req)
     
     if (!file) {
       return NextResponse.json({ error: 'No file provided' }, { status: 400 })
@@ -393,7 +422,29 @@ IMPORTANT: Ensure all LaTeX commands are properly closed. If the response is lon
 \\usepackage{amsmath, amssymb, amsthm}
 \\usepackage{geometry}
 \\geometry{a4paper, margin=1in}
+\\usepackage{fancyhdr}
 `
+      
+      // Add document metadata if provided
+      if (title) {
+        preamble += `\\title{${escapeLatex(title)}}\n`
+      }
+      if (creator) {
+        preamble += `\\author{${escapeLatex(creator)}}\n`
+      }
+      if (date) {
+        preamble += `\\date{${escapeLatex(date)}}\n`
+      } else {
+        preamble += `\\date{\\today}\n`
+      }
+      
+      // Configure footer and header (must come before \pagestyle{fancy})
+      if (footer) {
+        preamble += `\\fancyfoot[C]{${escapeLatex(footer)}}\n`
+      } else {
+        preamble += `\\fancyfoot[C]{\\thepage}\n`
+      }
+      preamble += `\\fancyhead[L]{}\n\\fancyhead[R]{}\n\\renewcommand{\\headrulewidth}{0pt}\n\\pagestyle{fancy}\n`
       
       if (hasCJK) {
         // Use xeCJK - let it use system default fonts for cross-platform compatibility
@@ -404,10 +455,112 @@ IMPORTANT: Ensure all LaTeX commands are properly closed. If the response is lon
 `
       }
       
-      latexCode = `${preamble}
-\\begin{document}
-${latexCode}
-\\end{document}`
+      // Build document body
+      let documentBody = `\\begin{document}\n`
+      
+      // Add title page if title is provided
+      if (title) {
+        documentBody += `\\maketitle\n\\newpage\n`
+      }
+      
+      documentBody += `${latexCode}\n\\end{document}`
+      
+      latexCode = `${preamble}\n${documentBody}`
+    } else {
+      // If document already has preamble, try to inject metadata
+      // This is a fallback - ideally the AI should generate complete documents
+      if (title || creator || date || footer) {
+        // Try to add metadata before \begin{document}
+        if (latexCode.includes('\\begin{document}')) {
+          const parts = latexCode.split('\\begin{document}')
+          let preamble = parts[0]
+          const body = parts[1] || ''
+          
+          // Only add fancyhdr if we need footer or if it's not already there
+          const needsFancyhdr = footer && !preamble.includes('fancyhdr')
+          
+          if (needsFancyhdr) {
+            // Find a good place to insert fancyhdr (after geometry package or after other packages)
+            if (preamble.includes('\\usepackage{geometry}')) {
+              preamble = preamble.replace(
+                /(\\usepackage\{geometry\}[^\n]*\n)/,
+                '$1\\usepackage{fancyhdr}\n'
+              )
+            } else if (preamble.includes('\\usepackage{')) {
+              // Insert after the last \usepackage command
+              const lastUsepackage = preamble.lastIndexOf('\\usepackage{')
+              const nextNewline = preamble.indexOf('\n', lastUsepackage)
+              if (nextNewline !== -1) {
+                preamble = preamble.slice(0, nextNewline + 1) + '\\usepackage{fancyhdr}\n' + preamble.slice(nextNewline + 1)
+              } else {
+                preamble += '\\usepackage{fancyhdr}\n'
+              }
+            } else {
+              // If no packages found, add after documentclass
+              preamble = preamble.replace(
+                /(\\documentclass\[.*?\]\{.*?\}[^\n]*\n)/,
+                '$1\\usepackage{fancyhdr}\n'
+              )
+            }
+          }
+          
+          // Add metadata (before \begin{document})
+          if (title && !preamble.includes('\\title')) {
+            preamble += `\\title{${escapeLatex(title)}}\n`
+          }
+          if (creator && !preamble.includes('\\author')) {
+            preamble += `\\author{${escapeLatex(creator)}}\n`
+          }
+          if (date && !preamble.includes('\\date')) {
+            preamble += `\\date{${escapeLatex(date)}}\n`
+          }
+          
+          // Configure footer (must come AFTER loading fancyhdr package)
+          if (footer) {
+            // Ensure fancyhdr is loaded before using its commands
+            if (!preamble.includes('fancyhdr')) {
+              // Add fancyhdr package if not present
+              if (preamble.includes('\\usepackage{geometry}')) {
+                preamble = preamble.replace(
+                  /(\\usepackage\{geometry\}[^\n]*\n)/,
+                  '$1\\usepackage{fancyhdr}\n'
+                )
+              } else if (preamble.includes('\\usepackage{')) {
+                const lastUsepackage = preamble.lastIndexOf('\\usepackage{')
+                const nextNewline = preamble.indexOf('\n', lastUsepackage)
+                if (nextNewline !== -1) {
+                  preamble = preamble.slice(0, nextNewline + 1) + '\\usepackage{fancyhdr}\n' + preamble.slice(nextNewline + 1)
+                } else {
+                  preamble += '\\usepackage{fancyhdr}\n'
+                }
+              } else {
+                preamble = preamble.replace(
+                  /(\\documentclass\[.*?\]\{.*?\}[^\n]*\n)/,
+                  '$1\\usepackage{fancyhdr}\n'
+                )
+              }
+            }
+            
+            if (!preamble.includes('\\fancyfoot')) {
+              // Insert footer configuration right before \begin{document}
+              preamble += `\\fancyfoot[C]{${escapeLatex(footer)}}\n\\fancyhead[L]{}\n\\fancyhead[R]{}\n\\renewcommand{\\headrulewidth}{0pt}\n\\pagestyle{fancy}\n`
+            } else {
+              // If fancyfoot exists but we want to override it, replace it
+              preamble = preamble.replace(
+                /\\fancyfoot\[C\]\{[^}]*\}/,
+                `\\fancyfoot[C]{${escapeLatex(footer)}}`
+              )
+            }
+          }
+          
+          // Add maketitle if title exists and not already in body
+          if (title && !body.includes('\\maketitle') && !body.trim().startsWith('\\maketitle')) {
+            latexCode = `${preamble}\\begin{document}\n\\maketitle\n\\newpage\n${body}`
+          } else {
+            latexCode = `${preamble}\\begin{document}${body}`
+          }
+        }
+      }
     }
 
     // Sanitize LaTeX
@@ -423,11 +576,29 @@ ${latexCode}
     // Compile LaTeX to PDF
     try {
       const compileStart = Date.now()
-      await execAsync(`cd "${outputDir}" && xelatex -interaction=nonstopmode solutions.tex`)
-      const compileDuration = Date.now() - compileStart
-      log('LaTeX compilation completed', { compileDurationMs: compileDuration })
-      
       const pdfPath = join(outputDir, 'solutions.pdf')
+      
+      try {
+        await execAsync(`cd "${outputDir}" && xelatex -interaction=nonstopmode solutions.tex`)
+        const compileDuration = Date.now() - compileStart
+        log('LaTeX compilation completed', { compileDurationMs: compileDuration })
+      } catch (compileError: any) {
+        // LaTeX may produce output even with errors
+        // Check if PDF was created despite errors
+        try {
+          await readFile(pdfPath)
+          const compileDuration = Date.now() - compileStart
+          log('LaTeX compilation had errors but PDF was created', { 
+            compileDurationMs: compileDuration,
+            error: compileError.message?.substring(0, 200)
+          })
+          // Continue - PDF exists, so we can use it
+        } catch (fileError) {
+          // PDF doesn't exist, re-throw the original error
+          throw compileError
+        }
+      }
+      
       const pdfBuffer = await readFile(pdfPath)
       
       // Save files for download

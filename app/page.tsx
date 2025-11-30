@@ -8,6 +8,10 @@ export default function Home() {
   const [file, setFile] = useState<File | null>(null)
   const [prompt, setPrompt] = useState('')
   const [detailLevel, setDetailLevel] = useState<DetailLevel>('usual')
+  const [title, setTitle] = useState('')
+  const [date, setDate] = useState('')
+  const [creator, setCreator] = useState('')
+  const [footer, setFooter] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [warning, setWarning] = useState<string | null>(null)
@@ -58,6 +62,10 @@ export default function Home() {
     formData.append('file', file)
     formData.append('prompt', prompt)
     formData.append('detailLevel', detailLevel)
+    formData.append('title', title)
+    formData.append('date', date)
+    formData.append('creator', creator)
+    formData.append('footer', footer)
 
     try {
       const response = await fetch('/api/process', {
@@ -215,6 +223,70 @@ export default function Home() {
                   </div>
                 </label>
               ))}
+            </div>
+          </div>
+
+          {/* Document Metadata */}
+          <div className="border-t pt-4">
+            <h3 className="text-sm font-medium text-gray-700 mb-4">Document Information (Optional)</h3>
+            <div className="space-y-4">
+              <div>
+                <label htmlFor="title" className="block text-sm font-medium text-gray-700 mb-1">
+                  Title
+                </label>
+                <input
+                  type="text"
+                  id="title"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                  placeholder="e.g., Math 101 Solution Manual"
+                />
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label htmlFor="date" className="block text-sm font-medium text-gray-700 mb-1">
+                    Date
+                  </label>
+                  <input
+                    type="text"
+                    id="date"
+                    value={date}
+                    onChange={(e) => setDate(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                    placeholder="e.g., January 2025"
+                  />
+                </div>
+                
+                <div>
+                  <label htmlFor="creator" className="block text-sm font-medium text-gray-700 mb-1">
+                    Creator/Author
+                  </label>
+                  <input
+                    type="text"
+                    id="creator"
+                    value={creator}
+                    onChange={(e) => setCreator(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                    placeholder="e.g., Dr. John Smith"
+                  />
+                </div>
+              </div>
+              
+              <div>
+                <label htmlFor="footer" className="block text-sm font-medium text-gray-700 mb-1">
+                  Footer Text
+                </label>
+                <input
+                  type="text"
+                  id="footer"
+                  value={footer}
+                  onChange={(e) => setFooter(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                  placeholder="e.g., Confidential - For Educational Use Only"
+                />
+              </div>
             </div>
           </div>
 
