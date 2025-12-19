@@ -11,6 +11,8 @@ const execAsync = promisify(exec)
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions'
 const OPENROUTER_TIMEOUT_MS = Number(process.env.OPENROUTER_TIMEOUT_MS || '240000') // default 4 minutes to allow long generations
 
+type SolutionLanguage = 'english' | 'chinese'
+
 export const runtime = 'nodejs'
 export const maxDuration = 300 // 5 minutes
 
@@ -22,6 +24,7 @@ async function parseFormData(req: NextRequest): Promise<{
   date: string
   creator: string
   footer: string
+  solutionLanguage: SolutionLanguage
 }> {
   const formData = await req.formData()
   const file = formData.get('file') as File | null
@@ -31,8 +34,10 @@ async function parseFormData(req: NextRequest): Promise<{
   const date = (formData.get('date') as string) || ''
   const creator = (formData.get('creator') as string) || ''
   const footer = (formData.get('footer') as string) || ''
+  const solutionLanguageInput = (formData.get('solutionLanguage') as string) || 'english'
+  const solutionLanguage: SolutionLanguage = solutionLanguageInput === 'chinese' ? 'chinese' : 'english'
   
-  return { file, prompt, detailLevel, title, date, creator, footer }
+  return { file, prompt, detailLevel, title, date, creator, footer, solutionLanguage }
 }
 
 async function convertPdfToImages(pdfPath: string): Promise<string[]> {
@@ -64,6 +69,26 @@ async function getImageMimeType(imagePath: string): Promise<string> {
   if (imagePath.endsWith('.jpg') || imagePath.endsWith('.jpeg')) return 'image/jpeg'
   if (imagePath.endsWith('.pdf')) return 'application/pdf'
   return 'image/png'
+}
+
+function insertPackageLine(preamble: string, packageLine: string): string {
+  const lineWithNewline = packageLine.endsWith('\n') ? packageLine : `${packageLine}\n`
+  if (preamble.includes('\\usepackage')) {
+    const lastUsepackage = preamble.lastIndexOf('\\usepackage')
+    const nextNewline = preamble.indexOf('\n', lastUsepackage)
+    if (nextNewline !== -1) {
+      return preamble.slice(0, nextNewline + 1) + lineWithNewline + preamble.slice(nextNewline + 1)
+    }
+    return `${preamble}${lineWithNewline}`
+  }
+
+  const docclassMatch = preamble.match(/\\documentclass[^\n]*\n/)
+  if (docclassMatch) {
+    const insertIndex = preamble.indexOf(docclassMatch[0]) + docclassMatch[0].length
+    return preamble.slice(0, insertIndex) + lineWithNewline + preamble.slice(insertIndex)
+  }
+
+  return `${lineWithNewline}${preamble}`
 }
 
 /**
@@ -176,7 +201,7 @@ export async function POST(req: NextRequest) {
   let tempFiles: string[] = []
   
   try {
-    const { file, prompt, detailLevel, title, date, creator, footer } = await parseFormData(req)
+    const { file, prompt, detailLevel, title, date, creator, footer, solutionLanguage } = await parseFormData(req)
     
     if (!file) {
       return NextResponse.json({ error: 'No file provided' }, { status: 400 })
@@ -196,6 +221,7 @@ export async function POST(req: NextRequest) {
       isPdf,
       isImage,
       detailLevel,
+      solutionLanguage,
       promptLength: prompt.length,
     })
 
@@ -239,9 +265,14 @@ export async function POST(req: NextRequest) {
       detailed: 'Every logical step and explanation, full derivations, and commentary.',
     }
 
+    const languageDirective = solutionLanguage === 'chinese'
+      ? 'All explanatory text, labels, and commentary in the LaTeX output must be written in Chinese (Simplified).'
+      : 'Write all explanatory text, labels, and commentary in clear English.'
+
     const systemPrompt = `You are an expert math teacher. 
 Read the attached problem sheet and provide solutions in pure LaTeX code.
 Detail level: ${detailLevelMap[detailLevel] || detailLevelMap.usual}
+Language requirement: ${languageDirective}
 
 Each question should be labeled clearly (e.g., Q1, Q2, ...).
 Do not include explanations outside LaTeX syntax.
@@ -412,10 +443,13 @@ IMPORTANT: Ensure all LaTeX commands are properly closed. If the response is lon
     latexCode = latexCode.replace(/\\setCJKmainfont\{SimSun\}/gi, '% \\setCJKmainfont{SimSun} % Removed for cross-platform compatibility')
     latexCode = latexCode.replace(/\\setCJKmainfont\[[^\]]*\]\{SimSun\}/gi, '% \\setCJKmainfont{SimSun} % Removed for cross-platform compatibility')
 
+    const containsCJKChars = /[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]/.test(latexCode)
+    const latexHasXeCJK = /xeCJK/i.test(latexCode)
+    const needsCjkSupport = containsCJKChars || solutionLanguage === 'chinese'
+    const needsCjkPackageInjection = needsCjkSupport && !latexHasXeCJK
+
     // Validate LaTeX output
     if (!latexCode.includes('\\documentclass') && !latexCode.includes('\\begin{document}')) {
-      // Check if content contains Chinese/Japanese/Korean characters
-      const hasCJK = /[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]/.test(latexCode)
       
       // Build preamble with optional CJK support
       let preamble = `\\documentclass[12pt]{article}
@@ -446,7 +480,7 @@ IMPORTANT: Ensure all LaTeX commands are properly closed. If the response is lon
       }
       preamble += `\\fancyhead[L]{}\n\\fancyhead[R]{}\n\\renewcommand{\\headrulewidth}{0pt}\n\\pagestyle{fancy}\n`
       
-      if (hasCJK) {
+      if (needsCjkSupport) {
         // Use xeCJK - let it use system default fonts for cross-platform compatibility
         // This avoids font-specific errors on different operating systems
         preamble += `\\usepackage{xeCJK}
@@ -479,9 +513,8 @@ IMPORTANT: Ensure all LaTeX commands are properly closed. If the response is lon
       
       latexCode = `${preamble}\n${documentBody}`
     } else {
-      // If document already has preamble, try to inject metadata
-      // This is a fallback - ideally the AI should generate complete documents
-      if (title || creator || date || footer) {
+      // If document already has preamble, try to inject metadata or required packages
+      if (title || creator || date || footer || needsCjkPackageInjection) {
         // Try to add metadata before \begin{document}
         if (latexCode.includes('\\begin{document}')) {
           const parts = latexCode.split('\\begin{document}')
@@ -514,6 +547,10 @@ IMPORTANT: Ensure all LaTeX commands are properly closed. If the response is lon
                 '$1\\usepackage{fancyhdr}\n'
               )
             }
+          }
+
+          if (needsCjkPackageInjection) {
+            preamble = insertPackageLine(preamble, '\\usepackage{xeCJK}')
           }
           
           // Add metadata (before \begin{document})
